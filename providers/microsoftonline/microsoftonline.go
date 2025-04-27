@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 
 	"github.com/markbates/going/defaults"
 	"github.com/markbates/goth"
@@ -28,10 +29,11 @@ var defaultScopes = []string{"openid", "offline_access", "user.read"}
 // one manually.
 func New(clientKey, secret, callbackURL string, scopes ...string) *Provider {
 	p := &Provider{
-		ClientKey:    clientKey,
-		Secret:       secret,
-		CallbackURL:  callbackURL,
-		providerName: "microsoftonline",
+		ClientKey:       clientKey,
+		Secret:          secret,
+		CallbackURL:     callbackURL,
+		providerName:    "microsoftonline",
+		authCodeOptions: []oauth2.AuthCodeOption{},
 	}
 
 	p.config = newConfig(p, scopes)
@@ -40,13 +42,14 @@ func New(clientKey, secret, callbackURL string, scopes ...string) *Provider {
 
 // Provider is the implementation of `goth.Provider` for accessing microsoftonline.
 type Provider struct {
-	ClientKey    string
-	Secret       string
-	CallbackURL  string
-	HTTPClient   *http.Client
-	config       *oauth2.Config
-	providerName string
-	tenant       string
+	ClientKey       string
+	Secret          string
+	CallbackURL     string
+	HTTPClient      *http.Client
+	config          *oauth2.Config
+	providerName    string
+	tenant          string
+	authCodeOptions []oauth2.AuthCodeOption
 }
 
 // Name is the name used to retrieve this provider later.
@@ -69,7 +72,7 @@ func (p *Provider) Debug(debug bool) {}
 
 // BeginAuth asks MicrosoftOnline for an authentication end-point.
 func (p *Provider) BeginAuth(state string) (goth.Session, error) {
-	authURL := p.config.AuthCodeURL(state)
+	authURL := p.config.AuthCodeURL(state, p.authCodeOptions...)
 	return &Session{
 		AuthURL: authURL,
 	}, nil
@@ -130,6 +133,30 @@ func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 		return nil, err
 	}
 	return newToken, err
+}
+
+// SetPrompt sets the prompt values for the microsoftonline OAuth call. Use this to
+// force users to choose and account every time by passing "select_account",
+// for example.
+// See https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code
+func (p *Provider) SetPrompt(prompt string) {
+	if len(prompt) == 0 {
+		return
+	}
+	validPrompts := []string{"none", "login", "consent", "select_account"}
+	if slices.Contains(validPrompts, prompt) {
+		p.authCodeOptions = append(p.authCodeOptions, oauth2.SetAuthURLParam("prompt", prompt))
+	}
+}
+
+// SetLoginHint sets the login_hint parameter for the microsoftonline OAuth call.
+// Use this to prompt the user to log in with a specific account.
+// See https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code
+func (p *Provider) SetLoginHint(loginHint string) {
+	if loginHint == "" {
+		return
+	}
+	p.authCodeOptions = append(p.authCodeOptions, oauth2.SetAuthURLParam("login_hint", loginHint))
 }
 
 func newConfig(provider *Provider, scopes []string) *oauth2.Config {
